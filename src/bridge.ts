@@ -15,6 +15,8 @@ export interface ScriptRunResult {
 	text: string;
 	/** Script's printed value from the implicit `return` (serialized). */
 	value?: unknown;
+	/** Total bytes all bridged results returned into the sandbox (kept out of model context). */
+	bytesIn: number;
 	/** Number of bridged tool calls the script made. */
 	callCount: number;
 	/** Wall-clock duration. */
@@ -89,9 +91,13 @@ export async function runScript(
 
 	const rl = createInterface({ input: child.stdout! });
 
+	let bytesIn = 0;
 	const respond = (id: number, res: RpcResponse["result"], error?: string) => {
+		const payload = error ? { id, error } : { id, result: res };
+		const frame = JSON.stringify(payload);
+		if (!error && res !== undefined) bytesIn += frame.length;
 		if (childExited || !child.stdin?.writable) return;
-		child.stdin.write(`${JSON.stringify(error ? { id, error } : { id, result: res })}\n`);
+		child.stdin.write(`${frame}\n`);
 	};
 
 	const dispatch = async (op: string, args: Record<string, unknown>): Promise<unknown> => {
@@ -241,6 +247,7 @@ export async function runScript(
 		ok: error === undefined,
 		text: textBuf,
 		value: finishedValue,
+		bytesIn,
 		callCount,
 		durationMs: Date.now() - started,
 		logPath,

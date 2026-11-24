@@ -5,25 +5,13 @@ import { loadPolicy } from "./policy";
 
 const RISKY_SOURCE = /\b(rm\s+-|sudo\b|curl|wget|ssh\b|scp\b|>\s*\/)/;
 
-const DESCRIPTION = `Run a JavaScript program that calls host tools from inside a sandboxed Node process (programmatic tool calling).
+const DESCRIPTION = `Run one async JS program that batches host-tool calls inside a Node sandbox; only text() output reaches your context.
 
-Use this instead of many sequential tool calls when a task repeats the same call shape (per file, per test, per ticket), filters or aggregates large tool output, or follows a deterministic loop. One script = one model round-trip no matter how many calls it makes.
+USE ONLY for ≥4 same-shape calls or >10KB of tool output — otherwise call the host tools directly, it is cheaper.
 
-Sandbox helpers (all async — await them):
-  read(path)                      -> file contents (string)
-  write(path, content)            -> { path, bytes }
-  edit(path, from, to, {all})     -> string replace; fails unless unique or all:true
-  grep(pattern, {root, glob})     -> rg output (string)
-  glob(pattern, {root})           -> string[] of matches
-  bash(command, {timeoutMs})      -> stdout(+stderr on failure)
-  text(s)                         -> print to YOUR context (the only data you see)
-  sleep(ms)
+Async helpers: read(path), write(path,content), edit(path,from,to,{all}), grep(pattern,{root,glob}), glob(pattern,{root}), bash(command,{timeoutMs}), text(s), sleep(ms). Prefer Promise.all for independent calls.
 
-Everything else stays inside the program as variables and never enters your context — keep raw file contents, search hits, and command output in variables, then text() only the distilled result. console.log goes to a log file, not to you. Independent calls run concurrently with Promise.all / Promise.allSettled.
-
-text() is capped (~16KB) and individual results are capped (~256KB); the full run log lands in .omp/script-logs/ and you can read() or grep() it afterwards.
-
-Paths are confined to the project root. bash() has a policy denylist; .omp/script-mode.json can extend policy (root, allowPaths, writable, allowBash, bashDeny, maxScriptMs).`;
+Keep raw results in variables; text() only the distilled answer (≤16KB). No require/process/fs. Paths confined to project root; bash() has a policy denylist; .omp/script-mode.json extends policy.`;
 
 interface Job {
 	id: string;
@@ -51,7 +39,10 @@ export default function (pi: ExtensionAPI) {
 			{
 				type: "text" as const,
 				text: r.ok
-					? r.text || "(script finished; nothing printed — see log file)"
+					? (r.text || "(script finished; nothing printed — see log file)") +
+						(r.callCount <= 3 && r.bytesIn < 8192
+							? `\n[script note: ${r.callCount} bridged call(s), ${r.bytesIn}B kept in sandbox — direct tool calls would have cost fewer tokens here]`
+							: "")
 					: `script failed: ${r.error}\n${r.text}`,
 			},
 		],
@@ -59,6 +50,7 @@ export default function (pi: ExtensionAPI) {
 			ok: r.ok,
 			error: r.error,
 			value: r.value,
+			bytesIn: r.bytesIn,
 			callCount: r.callCount,
 			durationMs: r.durationMs,
 			logPath: r.logPath,
@@ -79,6 +71,7 @@ export default function (pi: ExtensionAPI) {
 		name: "script",
 		label: "Script (PTC)",
 		description: DESCRIPTION,
+		loadMode: "essential",
 		parameters: scriptParams,
 		approval: (args: unknown) => {
 			const code =
@@ -120,6 +113,7 @@ export default function (pi: ExtensionAPI) {
 						job.result = {
 							ok: false,
 							text: "",
+							bytesIn: 0,
 							callCount: 0,
 							durationMs: Date.now() - job.started,
 							logPath: "",

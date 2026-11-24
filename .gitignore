@@ -1,3 +1,4 @@
 node_modules/
 .omp/script-logs/
 *.code.js
+.openidea/

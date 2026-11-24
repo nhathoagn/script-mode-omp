@@ -15,7 +15,7 @@ Three tools:
 
 | Tool | Purpose |
 |---|---|
-| `script` | Run a JS program that calls host tools. `background: true` detaches it and wakes the agent on completion. |
+| `script` | Run a JS program that calls host tools — top-level tool (`loadMode: "essential"`), zero discovery overhead. `background: true` detaches it and wakes the agent on completion. The description carries a use-only-when trigger (≥4 same-shape calls or >10KB tool output); runs that end up below it come back with a `script note` hint so the model stops spending the overhead on small tasks. |
 | `script_status` | Check a background job's state, tail its log. |
 | `script_cancel` | Kill a running background job. |
 
