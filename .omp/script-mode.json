@@ -1,0 +1,9 @@
+{
+	"writable": true,
+	"allowBash": true,
+	"bashDeny": [
+		"\\bnpm\\s+publish\\b",
+		"\\bbun\\s+publish\\b",
+		"\\bgit\\s+push\\b"
+	]
+}

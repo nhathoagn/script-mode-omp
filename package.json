@@ -1,0 +1,20 @@
+{
+	"name": "omp-script-mode",
+	"version": "0.1.0",
+	"private": true,
+	"description": "Programmatic tool calling (PTC) for omp: a `script` tool that runs JavaScript in a sandboxed subprocess and batches host tool calls over JSON-RPC.",
+	"license": "MIT",
+	"omp": {
+		"extensions": ["./src/extension.ts"]
+	},
+	"devDependencies": {
+		"@oh-my-pi/pi-coding-agent": "^19.1.1",
+		"@types/bun": "^1.4.5",
+		"@types/node": "^24.0.0",
+		"typescript": "^5.9.0"
+	},
+	"scripts": {
+		"test": "bun test",
+		"typecheck": "bunx tsc --noEmit -p tsconfig.json"
+	}
+}
