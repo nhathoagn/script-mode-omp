@@ -2,6 +2,7 @@ import path from "node:path";
 import type { ExtensionAPI, ToolDefinition } from "@oh-my-pi/pi-coding-agent";
 import { runScript, type ScriptRunResult } from "./bridge";
 import { loadPolicy } from "./policy";
+import { emptySavings, formatSavingsLine, recordRun, writeSavings, type SessionSavings } from "./savings";
 
 const RISKY_SOURCE = /\b(rm\s+-|sudo\b|curl|wget|ssh\b|scp\b|>\s*\/)/;
 
@@ -22,41 +23,53 @@ interface Job {
 	result?: ScriptRunResult;
 }
 
+
 export default function (pi: ExtensionAPI) {
 	const z = pi.zod;
 	const jobs = new Map<string, Job>();
 	let seq = 0;
 	let cwd = ".";
 	let sendWake: ((job: Job) => void) | undefined;
+	let savings: SessionSavings = emptySavings();
+
+	const trackRun = (r: ScriptRunResult) => {
+		recordRun(savings, r.bytesIn, r.callCount, Buffer.byteLength(r.text, "utf8"));
+		writeSavings(logDir(), savings);
+	};
+
 
 	const logDir = () => path.join(cwd, ".omp", "script-logs");
 
 	const runJob = async (code: string, signal?: AbortSignal): Promise<ScriptRunResult> =>
 		runScript(code, { cwd, logDir: logDir(), policy: loadPolicy(cwd) }, signal);
 
-	const formatResult = (r: ScriptRunResult) => ({
-		content: [
-			{
-				type: "text" as const,
-				text: r.ok
-					? (r.text || "(script finished; nothing printed — see log file)") +
-						(r.callCount <= 3 && r.bytesIn < 8192
-							? `\n[script note: ${r.callCount} bridged call(s), ${r.bytesIn}B kept in sandbox — direct tool calls would have cost fewer tokens here]`
-							: "")
-					: `script failed: ${r.error}\n${r.text}`,
+	const formatResult = (r: ScriptRunResult) => {
+		const savingsLine = savings.runs > 0 ? `\n${formatSavingsLine(savings)}` : "";
+		return {
+			content: [
+				{
+					type: "text" as const,
+					text: r.ok
+						? (r.text || "(script finished; nothing printed — see log file)") +
+							(r.callCount <= 3 && r.bytesIn < 8192
+								? `\n[script note: ${r.callCount} bridged call(s), ${r.bytesIn}B kept in sandbox — direct tool calls would have cost fewer tokens here]`
+								: "") +
+							savingsLine
+						: `script failed: ${r.error}\n${r.text}`,
+				},
+			],
+			details: {
+				ok: r.ok,
+				error: r.error,
+				value: r.value,
+				bytesIn: r.bytesIn,
+				callCount: r.callCount,
+				durationMs: r.durationMs,
+				logPath: r.logPath,
+				timedOut: r.timedOut,
 			},
-		],
-		details: {
-			ok: r.ok,
-			error: r.error,
-			value: r.value,
-			bytesIn: r.bytesIn,
-			callCount: r.callCount,
-			durationMs: r.durationMs,
-			logPath: r.logPath,
-			timedOut: r.timedOut,
-		},
-	});
+		};
+	};
 
 	const scriptParams = z.object({
 		code: z.string().describe("JavaScript program; async helpers in scope; top-level code may use await via async wrapper semantics"),
@@ -120,7 +133,10 @@ export default function (pi: ExtensionAPI) {
 							error: e instanceof Error ? e.message : String(e),
 						};
 					})
-					.finally(() => sendWake?.(job));
+					.finally(() => {
+						if (job.result) trackRun(job.result);
+						sendWake?.(job);
+					});
 				return {
 					content: [
 						{
@@ -133,9 +149,13 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			const result = await runJob(params.code, signal);
+			trackRun(result);
 			return formatResult(result);
 		},
 		onSession(event) {
+			if (event.reason === "start" || event.reason === "switch" || event.reason === "branch" || event.reason === "tree") {
+				savings = emptySavings();
+			}
 			if (event.reason === "shutdown") {
 				for (const job of jobs.values()) {
 					if (job.state === "running") {

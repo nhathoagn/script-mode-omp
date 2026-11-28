@@ -1,3 +1,55 @@
+# Handoff — session token savings tracking
+
+## Logic
+
+Tracks how many tokens `script` runs save per session by comparing what direct tool
+calls would have cost (`bytesIn` — all bridged results) against what actually entered
+context (`text()` bytes). Cumulative totals persist to `.omp/script-logs/savings.json`
+after every run and are appended as a one-line suffix to each `script` tool result.
+
+## Implementation
+
+- `src/savings.ts` — owns the accumulator: `SessionSavings`, `recordRun` (per-run
+  `max(0, bytesIn - textBytes) / 4` token estimate), `writeSavings` (rewrites
+  `savings.json`, swallows IO errors), `formatSavingsLine`.
+- `src/extension.ts` — owns lifecycle: `trackRun` records + writes after each run;
+  called in `execute` for foreground runs and in the `.finally` of background jobs;
+  `savings` resets on `onSession` start/switch/branch/tree; `formatResult` appends
+  `formatSavingsLine` when `savings.runs > 0`.
+
+## Decisions
+
+- Reset on start/switch/branch/tree because all of those produce a new session file;
+  compaction is irrelevant — savings are a per-session counter, not context content.
+- Write-after-every-run instead of shutdown-only: omp exits can be abrupt and there
+  is no reliable shutdown hook for background completions; the file is tiny.
+- bytes/4 heuristic for tokens; text() bytes are subtracted since they ARE billed.
+
+## Debug without AI
+
+- `savings.json` missing: check `.omp/script-logs/` is writable; `writeSavings`
+  deliberately swallows errors so a read-only project dir cannot break runs.
+- Savings line absent from results: normal for zero runs or when the counter was
+  just reset by a session switch.
+
+## Risks
+
+- bytes/4 is a rough ratio — treated as an estimate, not billing data.
+- Background jobs completing after a session reset count into the NEW session.
+
+## Q&A
+
+- Q: Ai giữ state tổng savings? A: biến `savings` in-memory trong extension.ts, reset
+  mỗi session mới, ghi đè savings.json sau mỗi run — file chỉ là snapshot, không phải source of truth.
+- Q: Edge case dễ miss? A: background job xong sau khi session switch sẽ count vào session mới.
+- Q: Check nào chứng minh tracking đúng? A: chạy script nhiều lần, tokensSavedEstimate
+  trong savings.json phải tăng đúng = max(0, bytesIn - textBytes)/4 mỗi run.
+
+Confirmed-by: nhathoang
+Confirmed-at: 2026-11-28T13:30:00Z
+
+---
+
 # Handoff — omp-script-mode v0.1.0
 
 ## Logic

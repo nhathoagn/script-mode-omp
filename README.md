@@ -58,6 +58,9 @@ model ──script({code})──► extension.ts ──runScript──► bridge
 - **Policy**: `.omp/script-mode.json` in the project root — see below.
 - **Logs**: every call and `console.*` lands in `.omp/script-logs/<run>.log`; `text()`
   output is what the model sees (capped ~16KB).
+- **Token savings**: per-session totals accumulate in `.omp/script-logs/savings.json`
+  (runs, bridged calls, bytes kept in sandbox vs sent to context, `tokensSavedEstimate` ≈
+  bytes/4), rewritten after every run; each `script` result appends the running total.
 - **Wake semantics**: background jobs end with an `aside` user message (attribution `agent`),
   injected at the next step boundary; it starts a turn when the session is idle.
 
